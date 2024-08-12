@@ -31,37 +31,6 @@ local function load_module(module_name)
   return module
 end
 
-local function get_arguments()
-  return coroutine.create(function(dap_run_co)
-    local args = {}
-    vim.ui.input({ prompt = "Args: " }, function(input)
-      args = vim.split(input or "", " ")
-      coroutine.resume(dap_run_co, args)
-    end)
-  end)
-end
-
-local function get_build_flags(config)
-  return coroutine.create(function(dap_run_co)
-    local build_flags = config.build_flags
-    vim.ui.input({ prompt = "Build Flags: " }, function(input)
-      build_flags = vim.split(input or "", " ")
-      coroutine.resume(dap_run_co, build_flags)
-    end)
-  end)
-end
-
-local function filtered_pick_process()
-  local opts = {}
-  vim.ui.input(
-    { prompt = "Search by process name (lua pattern), or hit enter to select from the process list: " },
-    function(input)
-      opts["filter"] = input or ""
-    end
-  )
-  return require("dap.utils").pick_process(opts)
-end
-
 local function setup_delve_adapter(dap, config)
   local args = { "dap", "-l", "127.0.0.1:" .. config.delve.port }
   vim.list_extend(args, config.delve.args)
@@ -99,6 +68,101 @@ local function setup_delve_adapter(dap, config)
   end
 end
 
+local function setup_delve_adapter_with_cwd(dap, config, cwd)
+  local args = { "dap", "-l", "127.0.0.1:" .. config.delve.port }
+  vim.list_extend(args, config.delve.args)
+
+  local delve_config = {
+    type = "server",
+    port = config.delve.port,
+    executable = {
+      command = config.delve.path,
+      args = args,
+      detached = config.delve.detached,
+      cwd = cwd,
+    },
+    options = {
+      initialize_timeout_sec = config.delve.initialize_timeout_sec,
+    },
+  }
+
+  dap.adapters.go = function(callback, client_config)
+    if client_config.port == nil then
+      callback(delve_config)
+      return
+    end
+
+    local host = client_config.host
+    if host == nil then
+      host = "127.0.0.1"
+    end
+
+    local listener_addr = host .. ":" .. client_config.port
+    delve_config.port = client_config.port
+    delve_config.executable.args = { "dap", "-l", listener_addr }
+
+    callback(delve_config)
+  end
+end
+
+local function get_cwd()
+  return coroutine.create(function(dap_run_co)
+    local cwd = ""
+    local args = {}
+    vim.ui.input({ prompt = "Directory: " }, function(input)
+      local config = internal_global_config
+      cwd = input or config.delve.cwd
+      local dap = load_module("dap")
+      setup_delve_adapter_with_cwd(dap, config, cwd)
+      coroutine.resume(dap_run_co, args)
+    end)
+  end)
+end
+
+local function get_arguments()
+  return coroutine.create(function(dap_run_co)
+    local args = {}
+    vim.ui.input({ prompt = "Args: " }, function(input)
+      args = vim.split(input or "", " ")
+      local config = internal_global_config
+      local dap = load_module("dap")
+      setup_delve_adapter(dap, config)
+      coroutine.resume(dap_run_co, args)
+    end)
+  end)
+end
+
+local function restore_cwd()
+  return coroutine.create(function(dap_run_co)
+    local args = {}
+    local config = internal_global_config
+    local dap = load_module("dap")
+    setup_delve_adapter(dap, config)
+    coroutine.resume(dap_run_co, args)
+  end)
+end
+
+local function get_build_flags(config)
+  return coroutine.create(function(dap_run_co)
+    local build_flags = config.build_flags
+    vim.ui.input({ prompt = "Build Flags: " }, function(input)
+      build_flags = vim.split(input or "", " ")
+      coroutine.resume(dap_run_co, build_flags)
+    end)
+  end)
+end
+
+local function filtered_pick_process()
+  local opts = {}
+  vim.ui.input(
+    { prompt = "Search by process name (lua pattern), or hit enter to select from the process list: " },
+    function(input)
+      opts["filter"] = input or ""
+    end
+  )
+  return require("dap.utils").pick_process(opts)
+end
+
 local function setup_go_configuration(dap, configs)
   local common_debug_configs = {
     {
@@ -106,6 +170,15 @@ local function setup_go_configuration(dap, configs)
       name = "Debug",
       request = "launch",
       program = "${file}",
+      args = restore_cwd,
+      buildFlags = configs.delve.build_flags,
+    },
+    {
+      type = "go",
+      name = "Debug Package (Inside Directory)",
+      request = "launch",
+      program = "${fileDirname}",
+      args = get_cwd,
       buildFlags = configs.delve.build_flags,
     },
     {
@@ -129,6 +202,7 @@ local function setup_go_configuration(dap, configs)
       name = "Debug Package",
       request = "launch",
       program = "${fileDirname}",
+      args = restore_cwd,
       buildFlags = configs.delve.build_flags,
     },
     {
@@ -137,6 +211,7 @@ local function setup_go_configuration(dap, configs)
       mode = "local",
       request = "attach",
       processId = filtered_pick_process,
+      args = restore_cwd,
       buildFlags = configs.delve.build_flags,
     },
     {
@@ -145,6 +220,7 @@ local function setup_go_configuration(dap, configs)
       request = "launch",
       mode = "test",
       program = "${file}",
+      args = restore_cwd,
       buildFlags = configs.delve.build_flags,
     },
     {
@@ -153,6 +229,7 @@ local function setup_go_configuration(dap, configs)
       request = "launch",
       mode = "test",
       program = "./${relativeFileDirname}",
+      args = restore_cwd,
       buildFlags = configs.delve.build_flags,
     },
   }
