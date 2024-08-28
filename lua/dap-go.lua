@@ -68,43 +68,6 @@ local function setup_delve_adapter(dap, config)
   end
 end
 
-local function setup_delve_adapter_with_cwd(dap, config, cwd)
-  local args = { "dap", "-l", "127.0.0.1:" .. config.delve.port }
-  vim.list_extend(args, config.delve.args)
-
-  local delve_config = {
-    type = "server",
-    port = config.delve.port,
-    executable = {
-      command = config.delve.path,
-      args = args,
-      detached = config.delve.detached,
-      cwd = cwd,
-    },
-    options = {
-      initialize_timeout_sec = config.delve.initialize_timeout_sec,
-    },
-  }
-
-  dap.adapters.go = function(callback, client_config)
-    if client_config.port == nil then
-      callback(delve_config)
-      return
-    end
-
-    local host = client_config.host
-    if host == nil then
-      host = "127.0.0.1"
-    end
-
-    local listener_addr = host .. ":" .. client_config.port
-    delve_config.port = client_config.port
-    delve_config.executable.args = { "dap", "-l", listener_addr }
-
-    callback(delve_config)
-  end
-end
-
 local function get_cwd()
   return coroutine.create(function(dap_run_co)
     local cwd = ""
@@ -113,7 +76,8 @@ local function get_cwd()
       local config = internal_global_config
       cwd = input or config.delve.cwd
       local dap = load_module("dap")
-      setup_delve_adapter_with_cwd(dap, config, cwd)
+      config.delve.cwd = cwd
+      setup_delve_adapter(dap, config)
       coroutine.resume(dap_run_co, args)
     end)
   end)
